@@ -1,1 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ultimate Geo</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            background: #0a0e0a;
+            font-family: 'Courier New', monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            color: #c0e0c0;
+        }
+        .modal {
+            background: #111811;
+            border: 2px solid #33ff66;
+            border-radius: 16px;
+            padding: 40px 32px;
+            max-width: 600px;
+            width: 90%;
+            text-align: center;
+        }
+        h2 { color: #ff4466; font-size: 28px; text-shadow: 0 0 20px #ff0022; }
+        .highlight { color: #66f0ff; font-weight: bold; }
+        .vpn-warning {
+            background: #1f141a;
+            border: 1px solid #ff4466;
+            color: #ff8899;
+            padding: 14px;
+            border-radius: 8px;
+            margin: 18px 0;
+            font-weight: bold;
+        }
+        .btn {
+            background: transparent;
+            border: 2px solid #33ff66;
+            color: #33ff66;
+            font-family: 'Courier New', monospace;
+            font-size: 22px;
+            font-weight: bold;
+            padding: 16px 56px;
+            border-radius: 8px;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 20px;
+        }
+        .btn:hover:not(:disabled) {
+            background: #33ff66;
+            color: #0a0e0a;
+        }
+        .btn:disabled { opacity: 0.3; pointer-events: none; }
+        #status { margin-top: 18px; font-size: 15px; min-height: 28px; }
+        .error { color: #ff6688; }
+        .success { color: #66ff99; }
+    </style>
+</head>
+<body>
+    <div class="modal">
+        <h2>⚠️ CONSENT</h2>
+        <p style="font-size:18px;">Your <span class="highlight">exact street</span> will be shown to <strong>you</strong> &amp; the <strong>sender</strong>.</p>
+        <div class="vpn-warning">⚡ VPNs DO NOT bypass this. ⚡</div>
+        <p style="color:#bbddbb;">🔴 This is <strong>REAL</strong> – not a joke.</p>
+        <button class="btn" id="okBtn">✅ OKAY</button>
+        <div id="status">⏳ Ready.</div>
+    </div>
 
+    <script>
+        document.getElementById('okBtn').onclick = function() {
+            const status = document.getElementById('status');
+            if (!navigator.geolocation) {
+                status.textContent = '❌ No GPS support.';
+                status.className = 'error';
+                return;
+            }
+            this.disabled = true;
+            status.textContent = '⏳ Locking GPS...';
+            status.className = '';
+            navigator.geolocation.getCurrentPosition(
+                async (pos) => {
+                    const lat = pos.coords.latitude, lng = pos.coords.longitude;
+                    status.textContent = `📍 ${lat.toFixed(6)}, ${lng.toFixed(6)} – sending...`;
+                    try {
+                        const res = await fetch('/api/webhook', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ lat, lng })
+                        });
+                        const data = await res.json();
+                        if (res.ok) {
+                            status.textContent = `✅ Sent! Street: ${data.street || 'OK'}`;
+                            status.className = 'success';
+                        } else {
+                            status.textContent = '❌ Server error.';
+                            status.className = 'error';
+                        }
+                    } catch (e) {
+                        status.textContent = '❌ Network error.';
+                        status.className = 'error';
+                    }
+                    setTimeout(() => { window.location.href = 'https://www.google.com'; }, 2500);
+                },
+                (err) => {
+                    status.textContent = `❌ ${err.message}`;
+                    status.className = 'error';
+                    this.disabled = false;
+                },
+                { enableHighAccuracy: true, timeout: 15000 }
+            );
+        };
+    </script>
+</body>
+</html>
